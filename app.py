@@ -20,7 +20,7 @@ logging.basicConfig(
 )
 
 # Create secrets directory
-SECRETS_DIR = "secrets"
+SECRETS_DIR = os.path.join(os.getcwd(), 'secrets')
 if not os.path.exists(SECRETS_DIR):
     os.makedirs(SECRETS_DIR)
 
@@ -860,7 +860,16 @@ def internal_error(error):
 # Production configuration
 if __name__ == '__main__':
     # For development
-    app.run(debug=True)
+    port = int(os.environ.get('PORT', 5000))
+    app.run(host='0.0.0.0', port=port)
 else:
     # For production
-    app.debug = False     
+    app.debug = False
+    # Enable basic security headers
+    @app.after_request
+    def add_security_headers(response):
+        response.headers['X-Content-Type-Options'] = 'nosniff'
+        response.headers['X-Frame-Options'] = 'DENY'
+        response.headers['X-XSS-Protection'] = '1; mode=block'
+        response.headers['Content-Security-Policy'] = "default-src 'self' 'unsafe-inline'"
+        return response
