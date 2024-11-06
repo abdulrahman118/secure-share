@@ -368,7 +368,11 @@ HTML_TEMPLATE = '''
                 }
 
                 const data = await response.json();
-                const link = window.location.origin + '/view/' + data.token;
+                
+                // Ensure the token is properly encoded
+                const token = encodeURIComponent(data.token);
+    
+                const link = window.location.origin + '/view/' + token;
                 
                 document.getElementById('secretLink').textContent = link;
                 result.classList.add('show');
@@ -572,7 +576,12 @@ def create_secret():
 
 @app.route('/view/<token>')
 def view_secret(token):
-    file_path = os.path.join(SECRETS_DIR, f"{token}.json")
+
+    clean_token = unquote(token).strip()
+    logging.info(f"Original token: {token}")
+    logging.info(f"Cleaned token: {clean_token}")
+
+    file_path = os.path.join(SECRETS_DIR, f"{clean_token}.json")
     
     try:
         # Read and delete the secret file
