@@ -7,6 +7,7 @@ from datetime import datetime, timedelta
 import base64
 from hashlib import sha256
 from secrets import token_bytes
+from urllib.parse import unquote
 
 MAX_SECRET_LENGTH = 5000
 
@@ -368,7 +369,11 @@ HTML_TEMPLATE = '''
                 }
 
                 const data = await response.json();
-                const link = window.location.origin + '/view/' + data.token;
+                
+                // Ensure the token is properly encoded
+                const token = encodeURIComponent(data.token);
+    
+                const link = window.location.origin + '/view/' + token;
                 
                 document.getElementById('secretLink').textContent = link;
                 result.classList.add('show');
@@ -504,15 +509,44 @@ VIEW_TEMPLATE = '''
     <div class="container">
         <div class="card">
             <h1>Secret Message</h1>
-            <div class="secret-content">{{ secret }}</div>
-            <button onclick="copyToClipboard()">Copy Message</button>
-            <div class="warning">
-                Note: This message will be destroyed after you leave this page.
+            <div id="secretContainer" style="display: none;">
+                <div class="secret-content">{{ secret }}</div>
+                <button onclick="copyToClipboard()">Copy Message</button>
+                <div class="warning">
+                    Note: This message will be destroyed after you leave this page.
+                </div>
+            </div>
+            <div id="viewButtonContainer" class="text-center">
+                <button onclick="viewSecret('{{ token }}')">View Secret</button>
+                <p class="mt-4 text-sm text-gray-600">
+                    Click to view the secret. This can only be done once.
+                </p>
             </div>
         </div>
     </div>
 
     <script>
+
+        async function viewSecret(token) {
+            try {
+                // Make request to consume the secret
+                const response = await fetch(`/consume/${token}`, {
+                    method: 'POST'
+                });
+            
+                if (!response.ok) {
+                    throw new Error('Failed to consume secret');
+                }
+            
+                // Show the secret content
+                document.getElementById('viewButtonContainer').style.display = 'none';
+                document.getElementById('secretContainer').style.display = 'block';
+            } catch (err) {
+                console.error('Error:', err);
+                alert('Failed to view secret. It may have already been viewed.');
+            }
+        }
+        
         async function copyToClipboard() {
             const text = document.querySelector('.secret-content').textContent;
             try {
@@ -572,16 +606,24 @@ def create_secret():
 
 @app.route('/view/<token>')
 def view_secret(token):
-    file_path = os.path.join(SECRETS_DIR, f"{token}.json")
+
+    clean_token = unquote(token).strip()
+    logging.info(f"Original token: {token}")
+    logging.info(f"Cleaned token: {clean_token}")
+
+    file_path = os.path.join(SECRETS_DIR, f"{clean_token}.json")
     
     try:
         # Read and delete the secret file
         with open(file_path, 'r') as f:
-            data = json.load(f)
-        os.remove(file_path)
+            data = json.load(f)        
         
         # Check if expired
         if datetime.now().timestamp() > data['expires_at']:
+
+            if os.path.exists(file_path):
+                os.remove(file_path)
+
             logging.info(f'Expired secret accessed: {token}')
             return render_template_string('''
                 <!DOCTYPE html>
@@ -638,7 +680,7 @@ def view_secret(token):
         # Decrypt secret
         decrypted_secret = secure_decrypt(data['secret'])
         logging.info(f'Secret viewed successfully: {token}')
-        return render_template_string(VIEW_TEMPLATE, secret=decrypted_secret)
+        return render_template_string(VIEW_TEMPLATE, secret=decrypted_secret, token=clean_token)
         
     except FileNotFoundError:
         logging.info(f'Attempted to view non-existent secret: {token}')
@@ -747,7 +789,21 @@ def view_secret(token):
             </body>
             </html>
         '''), 500
-        
+
+@app.route('/consume/<token>', methods=['POST'])
+def consume_secret(token):
+    clean_token = unquote(token).strip()
+    file_path = os.path.join(SECRETS_DIR, f"{clean_token}.json")
+    
+    try:
+        if os.path.exists(file_path):
+            os.remove(file_path)
+            return jsonify({'success': True})
+        return jsonify({'success': False, 'error': 'Secret not found'})
+    except Exception as e:
+        logging.error(f'Error consuming secret: {str(e)}')
+        return jsonify({'success': False, 'error': str(e)})
+            
 # Error handling for production
 @app.errorhandler(404)
 def not_found_error(error):
